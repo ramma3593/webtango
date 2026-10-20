@@ -19,66 +19,132 @@
     <script>
     (function() {
         var origFocus = HTMLElement.prototype.focus;
-        var lastFocusedBacking = null;
-        var inPointerUp = false;
-        var focusedDuringGesture = false;
+        var isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+        var touchActive = false;
+        var inUserActivationEvent = false;
+        var pendingFocusEl = null;
+        var currentBackingEl = null;
+        var keyboardWasVisible = false;
 
-        window.addEventListener('pointerdown', function() {
-            focusedDuringGesture = false;
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', function() {
+                var diff = window.innerHeight - window.visualViewport.height;
+                if (diff > 80) {
+                    keyboardWasVisible = true;
+                } else if (diff < 40 && keyboardWasVisible) {
+                    keyboardWasVisible = false;
+                    if (currentBackingEl && currentBackingEl.isConnected) {
+                        try { currentBackingEl.blur(); } catch (_) {}
+                    }
+                }
+            });
+        }
+
+        window.addEventListener('touchstart', function() {
+            touchActive = true;
+            pendingFocusEl = null;
         }, true);
-        window.addEventListener('pointerup', function() {
-            inPointerUp = true;
-            setTimeout(function() { inPointerUp = false; }, 0);
+
+        window.addEventListener('pointerdown', function(e) {
+            if (e.pointerType === 'touch' || e.pointerType === 'pen') {
+                touchActive = true;
+                pendingFocusEl = null;
+            }
         }, true);
 
         HTMLElement.prototype.focus = function(options) {
+            if (this.tagName === 'CANVAS') {
+                if (currentBackingEl && currentBackingEl.isConnected) {
+                    return;
+                }
+            }
             if (this.classList && this.classList.contains('compose-backing-field')) {
-                lastFocusedBacking = this;
+                currentBackingEl = this;
                 if (this.getAttribute('inputmode') === 'number') {
                     this.setAttribute('inputmode', 'numeric');
                 }
                 this.style.webkitUserSelect = 'text';
                 this.style.userSelect = 'text';
-                this.style.minWidth = '16px';
-                this.style.minHeight = '16px';
-                if (inPointerUp) {
-                    focusedDuringGesture = true;
+                this.style.minWidth = '24px';
+                this.style.minHeight = '24px';
+
+                var root = this.getRootNode && this.getRootNode();
+                if (root && root.querySelector) {
+                    var canvas = root.querySelector('canvas');
+                    if (canvas && canvas.hasAttribute('tabindex')) {
+                        canvas.removeAttribute('tabindex');
+                    }
+                }
+
+                if (isTouchDevice && !inUserActivationEvent) {
+                    if (touchActive) {
+                        pendingFocusEl = this;
+                    }
+                    var isAlreadyActive = root && root.activeElement === this;
+                    if (!isAlreadyActive) {
+                        return;
+                    }
                 }
             }
             return origFocus.call(this, options);
         };
 
-        window.addEventListener('touchend', function(e) {
-            var el = lastFocusedBacking;
+        function activatePendingFocus(e) {
+            var el = pendingFocusEl;
+            pendingFocusEl = null;
+            touchActive = false;
             if (!el || !el.isConnected) return;
+            if (el.getAttribute('inputmode') === 'number') {
+                el.setAttribute('inputmode', 'numeric');
+            }
             var root = el.getRootNode && el.getRootNode();
-            var isActive = root && root.activeElement === el;
-            var shouldRefocus = focusedDuringGesture;
-            if (!shouldRefocus && isActive && e.changedTouches && e.changedTouches.length > 0) {
-                var t = e.changedTouches[0];
-                var r = el.getBoundingClientRect();
-                if (r.width > 0 && r.height > 0 &&
-                    t.clientX >= r.left - 24 && t.clientX <= r.right + 24 &&
-                    t.clientY >= r.top - 24 && t.clientY <= r.bottom + 24) {
-                    shouldRefocus = true;
+            var isAlreadyActive = root && root.activeElement === el;
+            inUserActivationEvent = true;
+            try {
+                if (isAlreadyActive && !keyboardWasVisible) {
+                    var s = el.selectionStart, end = el.selectionEnd;
+                    el.blur();
+                    origFocus.call(el);
+                    try {
+                        if (s != null && end != null) el.setSelectionRange(s, end);
+                    } catch (_) {}
+                } else if (!isAlreadyActive) {
+                    origFocus.call(el);
                 }
+            } finally {
+                inUserActivationEvent = false;
             }
-            if (shouldRefocus) {
-                focusedDuringGesture = false;
-                if (el.getAttribute('inputmode') === 'number') {
-                    el.setAttribute('inputmode', 'numeric');
-                }
-                e.preventDefault = function() {};
-                var s = el.selectionStart, end = el.selectionEnd;
-                el.blur();
-                origFocus.call(el, { preventScroll: true });
-                try {
-                    if (s != null && end != null) el.setSelectionRange(s, end);
-                } catch (_) {}
+            if (e && e.cancelable && e.type === 'touchend') {
+                e.preventDefault();
             }
+        }
+
+        window.addEventListener('touchend', function(e) {
+            if (pendingFocusEl) {
+                activatePendingFocus(e);
+            } else {
+                touchActive = false;
+            }
+        }, false);
+
+        window.addEventListener('touchcancel', function() {
+            pendingFocusEl = null;
+            touchActive = false;
         }, true);
+
+        window.addEventListener('mouseup', function(e) {
+            if (pendingFocusEl) {
+                activatePendingFocus(e);
+            }
+        }, false);
+
+        window.addEventListener('click', function(e) {
+            if (pendingFocusEl) {
+                activatePendingFocus(e);
+            }
+        }, false);
     })();
     </script>
-    <script type="application/javascript" src="webApp.js"></script>
+    <script type="application/javascript" src="webApp.js?v=2"></script>
 </body>
 </html>
