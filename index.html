@@ -16,6 +16,69 @@
                               repeatCount="indefinite"/>
         </circle>
     </svg>
+    <script>
+    (function() {
+        var origFocus = HTMLElement.prototype.focus;
+        var lastFocusedBacking = null;
+        var inPointerUp = false;
+        var focusedDuringGesture = false;
+
+        window.addEventListener('pointerdown', function() {
+            focusedDuringGesture = false;
+        }, true);
+        window.addEventListener('pointerup', function() {
+            inPointerUp = true;
+            setTimeout(function() { inPointerUp = false; }, 0);
+        }, true);
+
+        HTMLElement.prototype.focus = function(options) {
+            if (this.classList && this.classList.contains('compose-backing-field')) {
+                lastFocusedBacking = this;
+                if (this.getAttribute('inputmode') === 'number') {
+                    this.setAttribute('inputmode', 'numeric');
+                }
+                this.style.webkitUserSelect = 'text';
+                this.style.userSelect = 'text';
+                this.style.minWidth = '16px';
+                this.style.minHeight = '16px';
+                if (inPointerUp) {
+                    focusedDuringGesture = true;
+                }
+            }
+            return origFocus.call(this, options);
+        };
+
+        window.addEventListener('touchend', function(e) {
+            var el = lastFocusedBacking;
+            if (!el || !el.isConnected) return;
+            var root = el.getRootNode && el.getRootNode();
+            var isActive = root && root.activeElement === el;
+            var shouldRefocus = focusedDuringGesture;
+            if (!shouldRefocus && isActive && e.changedTouches && e.changedTouches.length > 0) {
+                var t = e.changedTouches[0];
+                var r = el.getBoundingClientRect();
+                if (r.width > 0 && r.height > 0 &&
+                    t.clientX >= r.left - 24 && t.clientX <= r.right + 24 &&
+                    t.clientY >= r.top - 24 && t.clientY <= r.bottom + 24) {
+                    shouldRefocus = true;
+                }
+            }
+            if (shouldRefocus) {
+                focusedDuringGesture = false;
+                if (el.getAttribute('inputmode') === 'number') {
+                    el.setAttribute('inputmode', 'numeric');
+                }
+                e.preventDefault = function() {};
+                var s = el.selectionStart, end = el.selectionEnd;
+                el.blur();
+                origFocus.call(el, { preventScroll: true });
+                try {
+                    if (s != null && end != null) el.setSelectionRange(s, end);
+                } catch (_) {}
+            }
+        }, true);
+    })();
+    </script>
     <script type="application/javascript" src="webApp.js"></script>
 </body>
 </html>
